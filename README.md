@@ -8,6 +8,16 @@ All Binance Smart Chain Archive snapshots are hosted on S3 on the following path
 
 This path is public, but is configured as requester-pays. This means you'll need an AWS account in order access/download them. This is because I calculated that a full download would cost \~$15USD in just data transfer costs as of 2021-06-19. You may greatly reduce this cost to nearly zero by using AWS in us-west-2 region. In such case, you should only need to pay for the cost of the api request (ie: <$0.00001USD).
 
+# Download and build a full archive node
+As reference code I have provided: `build_archive_node.sh` in this repo.
+
+To build a server capable of running an archive node (this assumes ubuntu 20.04):
+* Get an AWS account and ensure it is configured on the computer (I strongly encourage you to run this in AWS's EC2 on `i3en.6xlarge` in `us-west-2`)
+* Checkout this repo to the computer
+* Run `sudo ./build_archive_node.sh`.
+* It will take some time to finish. You can run `sudo watch -n1 zfs list` to see numbers move if you want to make sure it is doing something.
+* When it is done, it should be serving an archive on port `26656`.
+
 # How it works
 Instead of putting all archive data on a single geth instance this approach has you create multiple geth instances that only serve part of the chain.
 
