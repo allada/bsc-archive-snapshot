@@ -25,7 +25,7 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 # Directory of where this file lives.
-SELF_DIR=$(dirname $0)
+SELF_DIR=$(realpath $(dirname $0))
 
 # This is the port number it will start with. Each geth instance will get a port
 # number will incremented from this port number.
@@ -33,9 +33,18 @@ START_PORT_NUMBER=6340
 # Base S3 bucket on where to download snapshots from.
 S3_BUCKET_PATH="s3://public-blockchain-snapshots"
 
+cd "$SELF_DIR"
+
 # Basic installs.
 apt update
 apt install -y awscli zfsutils-linux golang-go
+
+# Install nodejs 16+.
+curl -fsSL https://deb.nodesource.com/setup_16.x | bash -
+apt install -y nodejs
+npm install --global yarn
+# Install ethers for the proxy.
+yarn add ethers
 
 # Creates a new pool with the default device.
 DEVICES=( $(lsblk -o NAME,MODEL | grep NVMe | cut -d' ' -f 1) )
@@ -119,7 +128,7 @@ Description=BSC Geth Websocket Proxy
 [Service]
 User=geth
 WorkingDirectory=$SELF_DIR
-ExecStart=$SELF_DIR/ws_proxy.js ${WS_ENDPOINTS[@]}
+ExecStart=node $SELF_DIR/ws_proxy.js ${WS_ENDPOINTS[@]}
 Restart=always
 
 [Install]

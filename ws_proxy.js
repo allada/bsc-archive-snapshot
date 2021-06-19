@@ -44,7 +44,9 @@ const LISTEN_PORT_NUMBER = 26656;
 const PING_INTERVAL_MS = 30000;
 
 // Each argument provided should be a URI to a geth websocket service.
-const endPoints = process.argv;
+// Note: We take the first two items off because they are `node` and
+// `./ws_proxy.js`.
+const endPoints = Array.from(process.argv).slice(2);
 
 // Providers that are going to be used to route requests. This will be filled
 // later in the script.
