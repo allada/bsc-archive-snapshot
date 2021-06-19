@@ -19,6 +19,11 @@
 # under the License.
 set -euxo pipefail
 
+if [[ $EUID -ne 0 ]]; then
+   echo "This script must be run as root" 
+   exit 1
+fi
+
 # Directory of where this file lives.
 SELF_DIR=$(dirname $0)
 
