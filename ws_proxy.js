@@ -38,7 +38,7 @@ const WebSocket = require('ws');
 // users might want.
 
 // Port number has no special meaning, was randomly chosen.
-const LISTEN_PORT_NUMBER = 26656;
+const LISTEN_PORT_NUMBER = 13714;
 
 // Interval to ping (ie: timeout) in milliseconds.
 const PING_INTERVAL_MS = 30000;

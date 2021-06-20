@@ -19,7 +19,7 @@ To build a server capable of running an archive node (this assumes ubuntu 20.04)
 * Checkout this repo to the computer
 * Run `sudo ./build_archive_node.sh`.
 * It will take some time to finish. You can run `sudo watch -n1 zfs list` to see numbers move if you want to make sure it is doing something.
-* When it is done, it should be serving an archive on port `26656`.
+* When it is done, it should be serving an archive on port `13714`.
 
 # How it works
 Instead of putting all archive data on a single geth instance this approach has you create multiple geth instances that only serve part of the chain.
