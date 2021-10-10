@@ -1,3 +1,8 @@
+# IMPORTANT UPDATE
+Due to the cost of maintaining this project (about $1,000USD/mo) I have decided to greatly increase the data retrieval costs associated with S3. This change increased the cost of fetching these objects to $0.01USD/GB. As of Oct 10 2021, this will cost about $200USD (~20TB) per full fetch of this dataset.
+
+I never intended to make money from this project, but I also never intended to loose money from it either. If enough currency is sent to the wallet below, I'm happy to go back to the old pricing model (near free). If you work for a company that wants to send a check and write it off, please send me a message and I can add it to the pool manually.
+
 # BSC Archive Node Snapshot Tools
 This repository holds the tools and commands that can be used to deploy your own BSC Archive node by downloading pre-built snapshots and installing them on an instance.
 
