@@ -80,7 +80,7 @@ while IFS= read -r FILE_NAME; do
   ZFS_NAME=$(echo "$FILE_NAME" | cut -d'.' -f1)
   ARCHIVE_NAMES+=("$ZFS_NAME")
   zfs create -o "mountpoint=/$ZFS_NAME" "tank/$ZFS_NAME"
-  bash -c "cd /$ZFS_NAME && aws s3 cp --request-payer=requester '$S3_BUCKET_PATH/bsc/$FILE_NAME' - | /zstd/zstd --long=30 -d | tar -xf -" &
+  bash -c "cd /$ZFS_NAME && aws s3 cp --request-payer=requester '$S3_BUCKET_PATH/bsc/$FILE_NAME' - | /zstd/zstd --long=30 -d | tar -xf -"
 done <<<"$(aws s3 ls --request-payer=requester "$S3_BUCKET_PATH/bsc/" | cut -d' ' -f4)"
 
 # Block until all background processes finish.
