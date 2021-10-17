@@ -8,6 +8,10 @@ This repository holds the tools and commands that can be used to deploy your own
 
 You can support me in this kind of public work by donating to:
 `0xd6A6Da9F5622FcB3C9745a4DDA5DcCa75d92a1F0`
+Prefer binance smart chain, stable coins, eth, btc, or bsc.
+
+Thank you!
+
 
 # BSC Archive Snapshots
 All Binance Smart Chain Archive snapshots are hosted on S3 on the following path:
