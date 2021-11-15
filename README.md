@@ -1,7 +1,9 @@
 # IMPORTANT UPDATE
-Due to the cost of maintaining this project (about $1,000USD/mo) I have decided to greatly increase the data retrieval costs associated with S3. This change increased the cost of fetching these objects to $0.01USD/GB. As of Oct 10 2021, this will cost about $200USD (~20TB) per full fetch of this dataset.
+Due to the cost of maintaining this project (about $1,000USD/mo) I have decided to greatly increase the data retrieval costs associated with S3. This change increased the cost of fetching these objects to $0.01USD/GB. As of Oct 10 2021, this will cost about $200USD (~20TB) per full fetch regardless of inside our outside us-west-1 of this dataset.
 
 I never intended to make money from this project, but I also never intended to loose money from it either. If enough currency is sent to the wallet below, I'm happy to go back to the old pricing model (near free). If you work for a company that wants to send a check and write it off, please send me a message and I can add it to the pool manually.
+
+Be warned fetching outside of AWS's us-west-2 will cost around $2,000 (as of Nov 15th, 2021) to fetch ~21TB.
 
 # BSC Archive Node Snapshot Tools
 This repository holds the tools and commands that can be used to deploy your own BSC Archive node by downloading pre-built snapshots and installing them on an instance.
@@ -18,7 +20,7 @@ All Binance Smart Chain Archive snapshots are hosted on S3 on the following path
 
 | s3://public-blockchain-snapshots/bsc/
 
-This path is public, but is configured as requester-pays. This means you'll need an AWS account in order access/download them. This is because I calculated that a full download would cost \~$15USD in just data transfer costs as of 2021-06-19. You may greatly reduce this cost to nearly zero by using AWS in us-west-2 region. In such case, you should only need to pay for the cost of the api request (ie: <$0.00001USD).
+This path is public, but is configured as requester-pays. This means you'll need an AWS account in order access/download them. This is because I calculated that a full download will cost ~$1,900USD in just data transfer costs as of 2021-11-15. You may greatly reduce this cost to nearly zero by using AWS in us-west-2 region. In such case, you should only need to pay for the cost of the api request (ie: <$1.00USD).
 
 # Download and build a full archive node
 As reference code I have provided: `build_archive_node.sh` in this repo.
