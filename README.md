@@ -1,4 +1,18 @@
-# IMPORTANT UPDATE
+# Moving to Erigon
+Due to unsustainable cost increase with maintaining this project, I have begun the process of moving to Erigon instead of Geth. This will take some time to get the node caught up to latest block.
+
+The main advantage of moving to erigon is that it will reduce the size of the snapshot from 30TB+ to ~4-8TB. In addition the data is highly compressible, so using a disk compression algorithm like lz4 has shown in testing to yield ~2.5x compression ratio. This will dramatically reduce the cost of storage from ~1.5k USD/mo for S3 storage to about $100-$200USD/mo and has better long term prospects.
+
+If you would like to take the current snapshot that is not finished for your own syncing you may download it by getting the latest version:
+```sh
+aws s3 ls --request-payer requester s3://public-blockchain-snapshots/bsc/erigon-
+```
+Then download import it using something like (requires disk drive to be formatted with zfs):
+```sh
+aws s3 cp --request-payer requester aws s3 ls --request-payer requester s3://public-blockchain-snapshots/bsc/FILE_NAME_HERE.zfs.zstd | zstd -d | pv | zfs recv DATASET_NAME
+```
+
+# IMPORTANT UPDATE FOR GETH SNAPSHOT
 Due to the cost of maintaining this project (about $1,000USD/mo) I have decided to greatly increase the data retrieval costs associated with S3. This change increased the cost of fetching these objects to $0.01USD/GB. As of Oct 10 2021, this will cost about $200USD (~20TB) per full fetch regardless of inside our outside us-west-1 of this dataset.
 
 I never intended to make money from this project, but I also never intended to loose money from it either. If enough currency is sent to the wallet below, I'm happy to go back to the old pricing model (near free). If you work for a company that wants to send a check and write it off, please send me a message and I can add it to the pool manually.
