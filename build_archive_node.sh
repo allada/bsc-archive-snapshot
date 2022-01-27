@@ -110,7 +110,7 @@ XDG_DATA_HOME=/erigon/data docker-compose create
 
 # This allows users to attach to the tmux session to read stdout/stderr or restart it
 # or whatever.
-sudo -u "$USER" tmux new-session -d -s erigon 'XDG_DATA_HOME=/erigon/data sudo make docker-compose'
+sudo -u "$USER" tmux new-session -d -s erigon 'sudo XDG_DATA_HOME=/erigon/data make docker-compose'
 
 # Create script that can be used to upload a snapshot quickly.
 cat <<EOT > /home/ubuntu/create-bsc-shapshot.sh
