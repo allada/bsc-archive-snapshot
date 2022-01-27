@@ -16,7 +16,7 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
-# under the License.
+# under the License.W
 set -euxo pipefail
 
 if [[ $EUID -ne 0 ]]; then
@@ -24,27 +24,15 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-# Directory of where this file lives.
-SELF_DIR=$(realpath $(dirname $0))
-
-# This is the port number it will start with. Each geth instance will get a port
-# number will incremented from this port number.
-START_PORT_NUMBER=6340
 # Base S3 bucket on where to download snapshots from.
 S3_BUCKET_PATH="s3://public-blockchain-snapshots"
-
-cd "$SELF_DIR"
+# If set to "1", will create a crontab entry to upload a snapshot daily.
+# This requires write permission to `S3_BUCKET_PATH`.
+SHOULD_AUTO_UPLOAD_SNAPSHOT="0"
 
 # Basic installs.
 apt update
-apt install -y awscli zfsutils-linux golang-go
-
-# Install nodejs 16+.
-curl -fsSL https://deb.nodesource.com/setup_16.x | bash -
-apt install -y nodejs
-npm install --global yarn
-# Install ethers for the proxy.
-yarn add ethers
+apt install -y awscli zfsutils-linux golang-go pv docker docker-compose clang-12 make
 
 # Creates a new pool with the default device.
 DEVICES=( $(lsblk -o NAME,MODEL | grep NVMe | cut -d' ' -f 1) )
@@ -57,84 +45,94 @@ zpool create -o ashift=12 tank "${DEVICES_FULLNAME[@]}"
 zfs set mountpoint=none tank
 
 # Configures ZFS to be slightly more optimal for our use case.
+zfs set compression=lz4 tank
 zfs set recordsize=32K tank
 zfs set sync=disabled tank
 zfs set redundant_metadata=most tank
 zfs set atime=off tank
 zfs set logbias=throughput tank
 
-# Download, setup and install zstd v1.5.0.
+# Download, setup and install zstd v1.5.2.
+# We use an upgraded version rather than what ubuntu uses because
+# 1.5.0+ greatly improved performance (3-5x faster for compression/decompression).
 zfs create -o mountpoint=/zstd tank/zstd
 cd /zstd
-aws s3 cp --request-payer=requester "$S3_BUCKET_PATH/support/zstd-v1.5.0-linux-x86.tar.gz" - | tar xzf -
+wget -q -O- https://github.com/facebook/zstd/releases/download/v1.5.2/zstd-1.5.2.tar.gz | tar xzf -
+cd /zstd/zstd-1.5.2
+CC=clang-12 CXX=clang++-12 CFLAGS="-O3" make zstd
+ln -s /zstd/zstd-1.5.2/zstd /zstd/zstd
 
 # Download, setup and install bsc-geth.
-zfs create -o mountpoint=/geth tank/geth
-cd /geth
-bash -c "aws s3 cp --request-payer=requester $S3_BUCKET_PATH/bsc-support/geth-v1.1.0-beta-linux-x86.tar.zstd - | /zstd/zstd -d | tar -xf -" &
+zfs create -o mountpoint=/erigon tank/erigon
+cd /erigon
+git clone https://github.com/ledgerwatch/erigon.git
 
-ARCHIVE_NAMES=()
+# Modify docker-compose to start with "--chain bsc" argument.
+sed -i 's/command: erigon /command: erigon --chain bsc /g' /erigon/erigon/docker-compose.yml
 
-# Query S3 for all archives and download them in parallel to a new zfs dataset.
-while IFS= read -r FILE_NAME; do
-  ZFS_NAME=$(echo "$FILE_NAME" | cut -d'.' -f1)
-  ARCHIVE_NAMES+=("$ZFS_NAME")
-  zfs create -o "mountpoint=/$ZFS_NAME" "tank/$ZFS_NAME"
-  bash -c "cd /$ZFS_NAME && aws s3 cp --request-payer=requester '$S3_BUCKET_PATH/bsc/$FILE_NAME' - | /zstd/zstd --long=30 -d | tar -xf -"
-done <<<"$(aws s3 ls --request-payer=requester "$S3_BUCKET_PATH/bsc/" | cut -d' ' -f4)"
+# Setup zfs dataset and download the latest erigon snapshot into it.
+zfs create -o mountpoint=/erigon/data/erigon tank/erigon_data
+cd /erigon/data/erigon
+aws s3 cp --request-payer=requester "$S3_BUCKET_PATH/bsc/erigon-latest.tar.zstd" - | pv | /zstd/zstd --long=31 -d | tar -xf -
 
-# Block until all background processes finish.
-wait
+# Set zfs's arc to 2GB. Erigon uses it's own cache system, so no need for zfs's.
+echo 2073741824 >> /sys/module/zfs/parameters/zfs_arc_max
 
-# Create geth user.
-useradd geth
+# Move docker files to a zvol. This is not required, but I (allada@)
+# uses small EBS volumes with large NVMe volumes. In addition docker
+# performs very poorly when using native zfs volumes, so we use
+# zvol + ext4 which gives better performance and less errors.
+service docker stop
+rm -rf /var/lib/docker
+zfs create -V 50G tank/docker
+# Sadly this is the best that I know of to prevent mkfs from erroring due to the above
+# command not finishing some background stuff.
+sleep 5
+mkfs.ext4 /dev/zvol/tank/docker
+mkdir /var/lib/docker
+mount /dev/zvol/tank/docker /var/lib/docker
+service docker start
 
-PORT=$START_PORT_NUMBER
-WS_ENDPOINTS=()
-# Loop through all snapshots and setup a new service.
-for ARCHIVE_NAME in "${ARCHIVE_NAMES[@]}"; do
-  chown -R geth "/$ARCHIVE_NAME"
-  ENTRY_POINT="/geth/readonly.sh"
-  # The latest snapshot has a special entry point, because it follows the chain.
-  if [ "$ARCHIVE_NAME" == "latest" ]; then
-    ENTRY_POINT="/geth/latest.sh"
-  fi
-  cat <<EOT > /etc/systemd/system/bsc-geth-archive-$ARCHIVE_NAME.service
-[Unit]
-Description=BSC Geth Service $ARCHIVE_NAME
+# Create erigon user.
+useradd erigon
 
-[Service]
-User=geth
-WorkingDirectory=/$ARCHIVE_NAME
-ExecStart=$ENTRY_POINT $PORT
-Restart=always
+cd /erigon/erigon
 
-[Install]
-WantedBy=multi-user.target
+# There are some permission issues with root owning files that docker-compose uses,
+# this is a simple hack to just make it work. In a production system these should
+# be more constrained to how you have the permissions setup.
+mkdir /erigon/data/erigon-grafana
+mkdir /erigon/data/erigon-prometheus
+chmod -R 777 /erigon/data/ # WARNING: Unsafe, but easiest way to get it working.
+chown -R erigon:erigon /erigon/data/
+XDG_DATA_HOME=/erigon/data docker-compose create
+
+# This allows users to attach to the tmux session to read stdout/stderr or restart it
+# or whatever.
+tmux new-session -d -s erigon 'XDG_DATA_HOME=/erigon/data make docker-compose'
+
+# Create script that can be used to upload a snapshot quickly.
+cat <<EOT > /home/ubuntu/create-bsc-shapshot.sh
+# Just in case delete clone (if exists).
+zfs destroy tank/erigon_upload
+zfs destroy tank/erigon_data@snap
+
+# First stop erigon and take a snapshot of drive.
+cd /erigon/erigon
+docker-compose stop
+zfs snap tank/erigon_data@snap
+docker-compose start
+
+# Clone drive and upload clone data and then delete clone
+zfs create -o mountpoint=/erigon_upload tank/erigon_data@snap tank/erigon_upload
+cd /erigon_upload
+tar c ./ | /zstd/zstd -v -T0 -6 | aws s3 cp - $S3_BUCKET_PATH/bsc/erigon-latest.tar.zstd --expected-size 4900000000000
+zfs destroy tank/erigon_upload
+zfs destroy tank/erigon_data@snap
 EOT
 
-  systemctl daemon-reload
-  systemctl enable "bsc-geth-archive-$ARCHIVE_NAME.service"
-  systemctl start "bsc-geth-archive-$ARCHIVE_NAME.service"
-
-  WS_ENDPOINTS+=("ws://127.0.0.1:$PORT")
-  PORT="$((PORT+1))"
-done
-
-cat <<EOT > /etc/systemd/system/bsc-geth-ws-proxy.service
-[Unit]
-Description=BSC Geth Websocket Proxy
-
-[Service]
-User=geth
-WorkingDirectory=$SELF_DIR
-ExecStart=node $SELF_DIR/ws_proxy.js ${WS_ENDPOINTS[@]}
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOT
-
-systemctl daemon-reload
-systemctl enable "bsc-geth-ws-proxy.service"
-systemctl start "bsc-geth-ws-proxy.service"
+# If we are configured to auto upload a snapshot configure crontab.
+if [[ "$SHOULD_AUTO_UPLOAD_SNAPSHOT" == "1" ]]; then
+  echo '/home/ubuntu/create-bsc-snapshot.sh' >> /etc/crontab
+  service cron reload
+fi

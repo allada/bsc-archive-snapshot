@@ -1,24 +1,3 @@
-# Moving to Erigon
-Due to unsustainable cost increase with maintaining this project, I have begun the process of moving to Erigon instead of Geth. This will take some time to get the node caught up to latest block.
-
-The main advantage of moving to erigon is that it will reduce the size of the snapshot from 30TB+ to ~4-8TB. In addition the data is highly compressible, so using a disk compression algorithm like lz4 has shown in testing to yield ~2.5x compression ratio. This will dramatically reduce the cost of storage from ~1.5k USD/mo for S3 storage to about $100-$200USD/mo and has better long term prospects.
-
-If you would like to take the current snapshot that is not finished for your own syncing you may download it by getting the latest version:
-```sh
-aws s3 ls --request-payer requester s3://public-blockchain-snapshots/bsc/erigon-
-```
-Then download import it using something like (requires disk drive to be formatted with zfs):
-```sh
-aws s3 cp --request-payer requester aws s3 ls --request-payer requester s3://public-blockchain-snapshots/bsc/FILE_NAME_HERE.zfs.zstd | zstd -d | pv | zfs recv DATASET_NAME
-```
-
-# IMPORTANT UPDATE FOR GETH SNAPSHOT
-Due to the cost of maintaining this project (about $1,000USD/mo) I have decided to greatly increase the data retrieval costs associated with S3. This change increased the cost of fetching these objects to $0.01USD/GB. As of Oct 10 2021, this will cost about $200USD (~20TB) per full fetch regardless of inside our outside us-west-1 of this dataset.
-
-I never intended to make money from this project, but I also never intended to loose money from it either. If enough currency is sent to the wallet below, I'm happy to go back to the old pricing model (near free). If you work for a company that wants to send a check and write it off, please send me a message and I can add it to the pool manually.
-
-Be warned fetching outside of AWS's us-west-2 will cost around $2,000 (as of Nov 15th, 2021) to fetch ~21TB.
-
 # BSC Archive Node Snapshot Tools
 This repository holds the tools and commands that can be used to deploy your own BSC Archive node by downloading pre-built snapshots and installing them on an instance.
 
@@ -34,42 +13,46 @@ All Binance Smart Chain Archive snapshots are hosted on S3 on the following path
 
 | s3://public-blockchain-snapshots/bsc/
 
-This path is public, but is configured as requester-pays. This means you'll need an AWS account in order access/download them. This is because I calculated that a full download will cost ~$1,900USD in just data transfer costs as of 2021-11-15. You may greatly reduce this cost to nearly zero by using AWS in us-west-2 region. In such case, you should only need to pay for the cost of the api request (ie: <$1.00USD).
+This path is public, but is configured as requester-pays. This means you'll need an AWS account in order access/download them. This is because I calculated that a full download will cost ~$100-150USD in just data transfer costs. You may greatly reduce this cost to nearly zero by using AWS in us-west-2 region. In such case, you should only need to pay for the cost of the api request (ie: <$0.10USD).
 
 # Download and build a full archive node
 As reference code I have provided: `build_archive_node.sh` in this repo.
 
 To build a server capable of running an archive node (this assumes ubuntu 20.04):
-* Get an AWS account and ensure it is configured on the computer (I strongly encourage you to run this in AWS's EC2 on `i3en.6xlarge` in `us-west-2`)
+* Get an AWS account and ensure it is configured on the computer (I strongly encourage you to run this in AWS's EC2 on `im4gn.2xlarge` or larger/similar in `us-west-2`)
 * Checkout this repo to the computer
 * Run `sudo ./build_archive_node.sh`.
-* It will take some time to finish. You can run `sudo watch -n1 zfs list` to see numbers move if you want to make sure it is doing something.
-* When it is done, it should be serving an archive on port `13714`.
+* When it is done, it should be serving an archive on port `8545`.
 
-# How it works
-Instead of putting all archive data on a single geth instance this approach has you create multiple geth instances that only serve part of the chain.
+# Why use Erigon?
+This snapshot uses [erigon](https://github.com/ledgerwatch/erigon) even though it is barely out of alpha stage. To understand why it is a bad idea to use `geth` as an archive node, you need to understand some internals on how `geth` works.
 
-## Why
-First lets look at a few factors. At time of writing BSC is about 9 months old and the chain is already 6-8TB in size; this obviously won't scale well. Once you take SSD costs into account as well over time it will become more and more difficult to run an archive node. In addition the way LevelDB works (geth's database) you can't easily put archival data on slower/cheaper disks and newer blocks on less-expensive disks (see below for exception to this). This presents a problem because you currently need at least SSDs in order to run a full node, and since an archive node is pretty much a full node with all intermediate states.
 
-The second reason for this is because at time of writing this there are very few providers that are able to run a BSC archive node successfully due how difficult it is to scale this up (this is why this project was started). To help get around this problem as well as get me a cost-effective archive node as fast as possible, I took a hard look at how geth works internally and realized that it is possible to partition archive chain into different instances. This solved many problems at the same time. First, it was EXTREMELY cost effective, since for my use case, I only needed to populate a database with archival data, I could spin up only parts of the chain at at time on smaller instances. It was also much cheaper to store the data, since I could host it in S3 instead of EBS and upon request download the ones I want in parallel (S3 is <1/2 the cost of EBS).
+## Geth internals
+As a quick refresher, let's talk about what an archive node is; in simple terms, an archive node is a node that can run any contract on a smart chain at any given block. A full node on the other hand can generally only serve any contract at the most recent blocks. In addition, an archive node is also a full node by nature.
 
-The third reason is because I believed providers were doing it wrong and wanted to set the story straight on how they could scale better. I was extremely frustrated at the fact that the providers that did offer this service had horrible latency and could only service a few requests per second. It obvious that the bottle neck was due to being unable to scale up quickly during high load, inability to load much of the chain into memory (ie: disk IO time) and the fact that a large amount of resources were being devoted to keeping up with the latest blocks.
+Geth maintains a `state`, this state can be thought of as the state of every contract, the contract bytecode, wallet balances and a few other things that are needed to execute a contract. This state is stored in a trie, which provides very efficient lookups, inserts and the keys used to reference the data in the trie are very space efficient while providing a root hash that can be used in the block header for security. The major technical difference between an archive node and a full node, is that an archive node never purges any of the state of any given block. A full node has a bit of logic that will try and remove any nodes of the trie tree that are no longer needed by the most recent blocks.
 
-## How it was built
-When I made this project, I estimated it would take \~30-60 days to get a single archive node up and running and was not willing to wait that long. To help expedite this, Binance offers snapshots available here:
-https://docs.binance.org/smart-chain/developer/snapshot.html
+Lets now build an example of a part of a state node and how geth manages it. Let's say I have a value that contains the an [ABI](https://docs.soliditylang.org/en/develop/abi-spec.html) referenceable key of the contract state that I need to store in the state tree. We will now say that we want to reference this value in the state. Geth will walk down the global state root node using the contract address until it comes across the old contract state and replace it (or insert a new node if it does not exist). The value of the contract's key will be a root hash of new merkle tree that we will traverse down for the data's key in the contract and the same process is performed on this trie. Each node in the trie that was used to get to the inserted location will be copied and replaced and marked as "dirty", until it gets to the root node, which then gets returned. This has the major advantage of only needing to make a copy of the part of the trie that was modified which saves a lot of space and processing time. When a new block is finalized, the current global root state node will then be committed to disk. Geth will then iterate every dirty node (starting from the leaves) and turn them into a "hashNode". Internally a "hashNode" is a node that does not have the data immediately available, only has a key that can be used to retrieve a serialized version of the node from a key-value store. There are a few layers of in-memory caching that happens here, but for now we will assume that the data must be read from disk to get the actual data that the "hashNode" represents. The key of the "hashNode" is the value that is run through the Keccak256 hashing algorithm. Then as we walk up the trie to the next level, we flatten all children into hashNodes and then hash all the children's hashes until we reach the parent. This algorithm is called a [Patricia Tree](https://eth.wiki/fundamentals/patricia-tree).
 
-In addition Binance also has the following repo:
-https://github.com/binance-chain/bsc-snapshots
+Great now that we know the internals of how this works, what's the problem with geth + archive node? It is important to remember how a [trie](https://en.wikipedia.org/wiki/Trie) works and how [merkle trees](https://en.wikipedia.org/wiki/Merkle_tree) work. Think of how many contracts & wallets exist at any given block, then imagine putting each address into a trie and estimate how many levels it'd create. At the time of writing this (Jan 26th 2022) there's about 130 million unique addresses on the BSC chain. For the sake of argument, lets assume all 130M of them exist in the latest block's state (which many will not due to having zero balance). If my math is correct (log2(130M)/4 [array of 16 refs or 1 nibble of each key can be stored per level]), you'll need an average of about 6-8 levels to fit these entries. Each one of these nodes is a 32 byte hash and each value is at least (except leaf nodes) 32 bytes, but usually 16 * 32 bytes, so this means that if one value changes in any contract or wallet, the state will require somewhere between 2-4kb of new data. This does not include any of the contract state changes that might also be changed, which can also be quite large on contracts with lots of state. These numbers roughly equate to the additional 200GB per day that was being generated in mid December 2021.
 
-Using both the first link and the git history of the git repo, I was able to download full node snapshots at different points in time and run them all in parallel on different nodes. This means that these nodes have all full node data from the last block on it and archival data from when it was snapshotted to the last block.
+Keep in mind that Geth's storage format is almost not compressible at all due to most of the data being just hashes.
 
-It took about 1 week to get the \~8TB of archival data. I arbitrarily chose 700G-800G as the splitting point for these instances, but has no real meaning.
+## How erigon stores data
+Erigon uses a completely different way of storing data. I have personally not dug deep into the code, but I will attempt to explain based on the documentation I've read and filling in the gaps based on the little code I have read.
 
-Once an archival snapshot was done and ready to be split, I would clone it using zfs's clone feature, run a full database compaction on the archive (which gives faster read times) and in parallel run: `geth prune` on it; this would turn the archive node back into a full node. After it was done pruning, I would then resume the (now) full node as an archive node which gave me a new "start block" for this new clone.
+Erigon first stores the data of each wallet and contract in a flat key-value database ([mdbx](https://github.com/erthink/libmdbx) for default local db, but does support remote databases too). Geth also stores data in a flat key-value list, but geth uses LevelDB, which both have a different set of pros and cons. Once it downloads all the headers and such, it will eventually start to build the state of each block, however, it does not actually store the hashes, it just puts uses a block index number + contract/wallet address as the key. Erigon will eventually calculate the entire tree, but it will only do it for the last blocks. Erigon will also eventually build indexes for things like Log entries, Transactions, Sender/Recipient data and whatever other indexes are needed. Then when you want to execute a contract as an archive node, it will not use the merkle root, but instead just do a single lookup per key, instead of walking a trie.
 
-# Technologies in use
+Not only is the data much smaller on disk and faster, but it is also highly compressible. As of Jan 26th 2022, the entire BSC archive is about 4.5TB compared to about 30TB required for `geth`. If you use a filesystem compressor too (like zfs + lz4), I see consistent 2.3x compression ratios with this configuration and about 4x ratios with `zstd` when uploading the tar.
+
+## Erigon's problems
+* Erigon is new and not yet battle tested
+* Erigon does not really keep up to date with latest blocks like you'd think (see below)
+
+The biggest problem with Erigon is that to my knowledge, it does not keep executing latest blocks as it gets them, instead it queues them up and batches them together. For example, Erigon takes about (on decent compute) 2 mins to process a batch, then process all items queued up as a batch again, but you can't access any of the blocks that it is working on until it has finished. However, there's good news if you need latest blocks + archive, `geth` has the ability to set how many block's worth of state hash to hold onto before it purges it. What you can do is write a proxy that will first ask erigon if it has that block and if not forward it to an instance that runs geth that is a full node. Then ensure the full node has enough recent blocks to cover while erigon is processing the batch.
+
+# Technologies I use
 I did a lot of testing of different file systems, different AWS node classes, different tuning parameters and came to the the following conclusions:
 
 ## ZFS
@@ -104,7 +87,5 @@ Spot instances are currently the absolute cheapest way to run an instance. The p
 
 Do not run all archive snapshots on the same instance, instead you should try and run smaller instances that can fit 1 to 2 archive snapshots on it at a time, but allow them to scale with the demand. This is because it is likely safe to assume that most users will likely be reading blocks closer to the head block than further back, if you can make that assumption, you can spin up more instances that have only that part of the chain. This has several advantages, the biggest advantage is that you can fit more of the chain into memory-per instance, this would likely not be the case if you ran all the chain on one node.
 
-### Instance class suggestion
-At the time of writing this, I am using `i3en.6xlarge`. However, I have had success running everything on a single `d3en.xlarge`, but I did need to modify `geth` to give a 2 min timeout instead of the default 5 second timeout on executing contracts. This is because HDDs are much slower at random IO (which is what geth uses a lot of).
-
-I also believe you may have success on smaller `i3` or `i3en` instances.
+# Do you still have the geth BSC archives?
+Yes, however they are only up to about mid December 2021 and in deep archive storage. If you need these archives, please reach out to me and I will see about resurrecting them and giving access, however this will come at a cost (as it will cost me to request them from AWS's deep archive storage).
