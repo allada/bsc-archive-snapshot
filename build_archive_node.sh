@@ -28,7 +28,8 @@ fi
 S3_BUCKET_PATH="s3://public-blockchain-snapshots"
 # If set to "1", will create a crontab entry to upload a snapshot daily.
 # This requires write permission to `S3_BUCKET_PATH`.
-SHOULD_AUTO_UPLOAD_SNAPSHOT="0"
+# You may also set this through an environmental variable at startup.
+# SHOULD_AUTO_UPLOAD_SNAPSHOT="0"
 
 # Basic installs.
 apt update
@@ -132,7 +133,7 @@ zfs destroy tank/erigon_data@snap
 EOT
 
 # If we are configured to auto upload a snapshot configure crontab.
-if [[ "$SHOULD_AUTO_UPLOAD_SNAPSHOT" == "1" ]]; then
+if [[ "${SHOULD_AUTO_UPLOAD_SNAPSHOT:-}" == "1" ]]; then
   echo '/home/ubuntu/create-bsc-snapshot.sh' >> /etc/crontab
   service cron reload
 fi
