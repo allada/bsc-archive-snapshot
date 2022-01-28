@@ -113,10 +113,11 @@ XDG_DATA_HOME=/erigon/data docker-compose create
 sudo -u "$USER" tmux new-session -d -s erigon 'sudo XDG_DATA_HOME=/erigon/data make docker-compose'
 
 # Create script that can be used to upload a snapshot quickly.
-cat <<EOT > /home/ubuntu/create-bsc-shapshot.sh
+cat <<EOT > /home/ubuntu/create-bsc-snapshot.sh
+set -ex
 # Just in case delete clone (if exists).
-zfs destroy tank/erigon_upload
-zfs destroy tank/erigon_data@snap
+zfs destroy tank/erigon_upload || true
+zfs destroy tank/erigon_data@snap || true
 
 # First stop erigon and take a snapshot of drive.
 cd /erigon/erigon
@@ -125,7 +126,7 @@ zfs snap tank/erigon_data@snap
 docker-compose start
 
 # Clone drive and upload clone data and then delete clone
-zfs create -o mountpoint=/erigon_upload tank/erigon_data@snap tank/erigon_upload
+zfs clone -o mountpoint=/erigon_upload tank/erigon_data@snap tank/erigon_upload
 cd /erigon_upload
 tar c ./ | /zstd/zstd -v -T0 -6 | aws s3 cp - $S3_BUCKET_PATH/bsc/erigon-latest.tar.zstd --expected-size 4900000000000
 zfs destroy tank/erigon_upload
@@ -134,6 +135,7 @@ EOT
 
 # If we are configured to auto upload a snapshot configure crontab.
 if [[ "${SHOULD_AUTO_UPLOAD_SNAPSHOT:-}" == "1" ]]; then
-  echo '/home/ubuntu/create-bsc-snapshot.sh' >> /etc/crontab
+  echo '@daily root /home/ubuntu/create-bsc-snapshot.sh' >> /etc/crontab
+  chmod +x /home/ubuntu/create-bsc-snapshot.sh
   service cron reload
 fi
