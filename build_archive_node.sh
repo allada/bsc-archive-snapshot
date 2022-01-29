@@ -129,6 +129,7 @@ docker-compose start
 zfs clone -o mountpoint=/erigon_upload tank/erigon_data@snap tank/erigon_upload
 cd /erigon_upload
 tar c ./ | /zstd/zstd -v -T0 -6 | aws s3 cp - $S3_BUCKET_PATH/bsc/erigon-latest.tar.zstd --expected-size 4900000000000
+cd /
 zfs destroy tank/erigon_upload
 zfs destroy tank/erigon_data@snap
 EOT
