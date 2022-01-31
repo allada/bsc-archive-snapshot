@@ -108,9 +108,10 @@ chmod -R 777 /erigon/data/ # WARNING: Unsafe, but easiest way to get it working.
 chown -R erigon:erigon /erigon/data/
 XDG_DATA_HOME=/erigon/data docker-compose create
 
-# This allows users to attach to the tmux session to read stdout/stderr or restart it
-# or whatever.
-sudo -u "$USER" tmux new-session -d -s erigon 'sudo XDG_DATA_HOME=/erigon/data make docker-compose'
+# This starts the erigon services.
+# You may follow the stdout/stderr of erigon services with:
+# sudo docker-compose logs -f
+XDG_DATA_HOME=/erigon/data make docker-compose
 
 # Create script that can be used to upload a snapshot quickly.
 cat <<EOT > /home/ubuntu/create-bsc-snapshot.sh
