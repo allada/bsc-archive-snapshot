@@ -111,7 +111,7 @@ XDG_DATA_HOME=/erigon/data docker-compose create
 # This starts the erigon services.
 # You may follow the stdout/stderr of erigon services with:
 # sudo docker-compose logs -f
-XDG_DATA_HOME=/erigon/data docker-compose start
+XDG_DATA_HOME=/erigon/data docker-compose up
 
 # Create script that can be used to upload a snapshot quickly.
 cat <<EOT > /home/ubuntu/create-bsc-snapshot.sh
