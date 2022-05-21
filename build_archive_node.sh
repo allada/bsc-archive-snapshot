@@ -33,10 +33,10 @@ S3_BUCKET_PATH="s3://public-blockchain-snapshots"
 
 # Basic installs.
 apt update
-apt install -y awscli zfsutils-linux golang-go pv docker docker-compose clang-12 make
+DEBIAN_FRONTEND=noninteractive apt install -y awscli zfsutils-linux golang-go pv docker docker-compose clang-12 make jq
 
 # Creates a new pool with the default device.
-DEVICES=( $(lsblk -o NAME,MODEL | grep NVMe | cut -d' ' -f 1) )
+DEVICES=( $(lsblk --fs --json | jq -r '.blockdevices[] | select(.children == null and .fstype == null) | .name') )
 DEVICES_FULLNAME=()
 for DEVICE in "${DEVICES[@]}"; do
   DEVICES_FULLNAME+=("/dev/$DEVICE")
