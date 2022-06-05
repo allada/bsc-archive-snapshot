@@ -24,10 +24,8 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-# Base S3 bucket on where to download snapshots from.
-S3_BUCKET_PATH="s3://public-blockchain-snapshots"
 # If set to "1", will create a crontab entry to upload a snapshot daily.
-# This requires write permission to `S3_BUCKET_PATH`.
+# This requires write permission to `s3://public-blockchain-snapshots`.
 # You may also set this through an environmental variable at startup.
 # SHOULD_AUTO_UPLOAD_SNAPSHOT="0"
 
@@ -68,16 +66,13 @@ zfs create -o mountpoint=/erigon tank/erigon
 cd /erigon
 git clone https://github.com/ledgerwatch/erigon.git
 
-# Modify docker-compose to start with "--chain bsc" argument.
-sed -i 's/command: erigon /command: erigon --chain bsc /g' /erigon/erigon/docker-compose.yml
-
 # Setup zfs dataset and download the latest erigon snapshot into it.
 zfs create -o mountpoint=/erigon/data/erigon tank/erigon_data
 cd /erigon/data/erigon
-aws s3 cp --request-payer=requester "$S3_BUCKET_PATH/bsc/erigon-latest.tar.zstd" - | pv | /zstd/zstd --long=31 -d | tar -xf -
+aws s3 cp --request-payer=requester "s3://public-blockchain-snapshots/bsc/erigon-latest.tar.zstd" - | pv | /zstd/zstd --long=31 -d | tar -xf -
 
 # Set zfs's arc to 2GB. Erigon uses it's own cache system, so no need for zfs's.
-echo 2073741824 >> /sys/module/zfs/parameters/zfs_arc_max
+echo 2073741824 > /sys/module/zfs/parameters/zfs_arc_max
 
 # Move docker files to a zvol. This is not required, but I (allada@)
 # uses small EBS volumes with large NVMe volumes. In addition docker
@@ -106,12 +101,15 @@ mkdir /erigon/data/erigon-grafana
 mkdir /erigon/data/erigon-prometheus
 chmod -R 777 /erigon/data/ # WARNING: Unsafe, but easiest way to get it working.
 chown -R erigon:erigon /erigon/data/
-XDG_DATA_HOME=/erigon/data docker-compose create
 
 # This starts the erigon services.
 # You may follow the stdout/stderr of erigon services with:
 # sudo docker-compose logs -f
-ERIGON_FLAGS=--syncmode=full XDG_DATA_HOME=/erigon/data docker-compose up -d
+ERIGON_FLAGS="--chain bsc --snapshots=false" \
+  XDG_DATA_HOME=/erigon/data \
+  DOCKER_BUILDKIT=1 \
+  COMPOSE_DOCKER_CLI_BUILD=1 \
+  docker-compose up -d erigon downloader
 
 # Create script that can be used to upload a snapshot quickly.
 cat <<EOT > /home/ubuntu/create-bsc-snapshot.sh
@@ -129,7 +127,7 @@ docker-compose start
 # Clone drive and upload clone data and then delete clone
 zfs clone -o mountpoint=/erigon_upload tank/erigon_data@snap tank/erigon_upload
 cd /erigon_upload
-tar c ./ | /zstd/zstd -v -T0 -6 | aws s3 cp - $S3_BUCKET_PATH/bsc/erigon-latest.tar.zstd --expected-size 4900000000000
+tar c ./ | /zstd/zstd -v -T0 -6 | aws s3 cp - s3://public-blockchain-snapshots/bsc/erigon-latest.tar.zstd --expected-size 4900000000000
 cd /
 zfs destroy tank/erigon_upload
 zfs destroy tank/erigon_data@snap
