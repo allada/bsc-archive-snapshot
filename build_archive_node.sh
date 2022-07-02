@@ -106,6 +106,8 @@ chown -R erigon:erigon /erigon/data/
 # You may follow the stdout/stderr of erigon services with:
 # sudo docker-compose logs -f
 ERIGON_FLAGS="--chain bsc --snapshots=false" \
+  DOCKER_UID=$(id -u erigon) \
+  DOCKER_GID=$(id -g erigon) \
   XDG_DATA_HOME=/erigon/data \
   DOCKER_BUILDKIT=1 \
   COMPOSE_DOCKER_CLI_BUILD=1 \
