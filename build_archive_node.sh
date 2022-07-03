@@ -111,7 +111,7 @@ ERIGON_FLAGS="--chain bsc --snapshots=false" \
   XDG_DATA_HOME=/erigon/data \
   DOCKER_BUILDKIT=1 \
   COMPOSE_DOCKER_CLI_BUILD=1 \
-  docker-compose up -d erigon downloader
+  docker-compose up -d
 
 # Create script that can be used to upload a snapshot quickly.
 cat <<EOT > /home/ubuntu/create-bsc-snapshot.sh
