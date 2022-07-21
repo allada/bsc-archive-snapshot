@@ -1,5 +1,12 @@
+## UPDATE
+There has been enough demand for an ethereum snapshot to be hosted that I have decided to start maintaining one here: https://github.com/allada/eth-archive-snapshot
+
 # BSC Archive Node Snapshot Tools
 This repository holds the tools and commands that can be used to deploy your own BSC Archive node by downloading pre-built snapshots and installing them on an instance.
+
+Please consider donating especially if you are using this project to make money. I am considering changing
+the license from Apache (extremely permissive) to something that requires a license (ie: fee) if you derive
+money from it. I would like to avoid this at all costs though!
 
 You can support me in this kind of public work by donating to:
 `0xd6A6Da9F5622FcB3C9745a4DDA5DcCa75d92a1F0`
