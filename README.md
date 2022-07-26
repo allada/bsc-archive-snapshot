@@ -26,7 +26,7 @@ This path is public, but is configured as requester-pays. This means you'll need
 As reference code I have provided: `build_archive_node.sh` in this repo.
 
 To build a server capable of running an archive node (this assumes ubuntu 20.04):
-* Get an AWS account and ensure it is configured on the computer (I strongly encourage you to run this in AWS's EC2 on `im4gn.2xlarge` or larger/similar in `us-west-2`)
+* Get an AWS account and ensure it is configured on the computer (I strongly encourage you to run this in AWS's EC2 on `Im4gn.4xlarge` or larger/similar in `us-west-2`, you need at least 64 gigs of ram). If your node cannot keep up with latest blocks, try running it on a larger instance with more ram.
 * Checkout this repo to the computer
 * Run `sudo ./build_archive_node.sh`.
 * When it is done, it should be serving an archive on port `8545`.
