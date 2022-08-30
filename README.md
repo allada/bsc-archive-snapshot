@@ -20,7 +20,7 @@ All Binance Smart Chain Archive snapshots are hosted on S3 on the following path
 
 | s3://public-blockchain-snapshots/bsc/
 
-This path is public, but is configured as requester-pays. This means you'll need an AWS account in order access/download them. This is because I calculated that a full download will cost ~$100-150USD in just data transfer costs. You may greatly reduce this cost to nearly zero by using AWS in us-west-2 region. In such case, you should only need to pay for the cost of the api request (ie: <$0.10USD).
+This path is public, but is configured as requester-pays. This means you'll need an AWS account in order access/download them. This is because I calculated that a full download will cost \~$100-150USD in just data transfer costs. You may greatly reduce this cost to nearly zero by using AWS in us-west-2 region. In such case, you should only need to pay for the cost of the api request (ie: <$0.10USD).
 
 # Download and build a full archive node
 As reference code I have provided: `build_archive_node.sh` in this repo.
@@ -49,15 +49,18 @@ Keep in mind that Geth's storage format is almost not compressible at all due to
 ## How erigon stores data
 Erigon uses a completely different way of storing data. I have personally not dug deep into the code, but I will attempt to explain based on the documentation I've read and filling in the gaps based on the little code I have read.
 
-Erigon first stores the data of each wallet and contract in a flat key-value database ([mdbx](https://github.com/erthink/libmdbx) for default local db, but does support remote databases too). Geth also stores data in a flat key-value list, but geth uses LevelDB, which both have a different set of pros and cons. Once it downloads all the headers and such, it will eventually start to build the state of each block, however, it does not actually store the hashes, it just puts uses a block index number + contract/wallet address as the key. Erigon will eventually calculate the entire tree, but it will only do it for the last blocks. Erigon will also eventually build indexes for things like Log entries, Transactions, Sender/Recipient data and whatever other indexes are needed. Then when you want to execute a contract as an archive node, it will not use the merkle root, but instead just do a single lookup per key, instead of walking a trie.
+Erigon first stores the data of each wallet and contract in a flat key-value database ([mdbx](https://github.com/erthink/libmdbx) for default local db). Geth also stores data in a flat key-value list, but geth uses LevelDB, which both have a different set of pros and cons. Once it downloads all the headers and such, it will eventually start to build the state of each block, however, it does not actually store the hashes, it just puts uses a block index number + contract/wallet address as the key. Erigon will eventually calculate the entire tree, but it will only do it for the last blocks. Erigon will also eventually build indexes for things like Log entries, Transactions, Sender/Recipient data and whatever other indexes are needed. Then when you want to execute a contract as an archive node, it will not use the merkle root, but instead just do a single lookup per key, instead of walking a trie.
 
 Not only is the data much smaller on disk and faster, but it is also highly compressible. As of Jan 26th 2022, the entire BSC archive is about 4.5TB compared to about 30TB required for `geth`. If you use a filesystem compressor too (like zfs + lz4), I see consistent 2.3x compression ratios with this configuration and about 4x ratios with `zstd` when uploading the tar.
 
 ## Erigon's problems
 * Erigon is new and not yet battle tested
-* Erigon does not really keep up to date with latest blocks like you'd think (see below)
+* ~~Erigon does not really keep up to date with latest blocks like you'd think (see below)~~
 
-The biggest problem with Erigon is that to my knowledge, it does not keep executing latest blocks as it gets them, instead it queues them up and batches them together. For example, Erigon takes about (on decent compute) 2 mins to process a batch, then process all items queued up as a batch again, but you can't access any of the blocks that it is working on until it has finished. However, there's good news if you need latest blocks + archive, `geth` has the ability to set how many block's worth of state hash to hold onto before it purges it. What you can do is write a proxy that will first ask erigon if it has that block and if not forward it to an instance that runs geth that is a full node. Then ensure the full node has enough recent blocks to cover while erigon is processing the batch.
+~~The biggest problem with Erigon is that to my knowledge, it does not keep executing latest blocks as it gets them, instead it queues them up and batches them together. For example, Erigon takes about (on decent compute) 2 mins to process a batch, then process all items queued up as a batch again, but you can't access any of the blocks that it is working on until it has finished. However, there's good news if you need latest blocks + archive, `geth` has the ability to set how many block's worth of state hash to hold onto before it purges it. What you can do is write a proxy that will first ask erigon if it has that block and if not forward it to an instance that runs geth that is a full node. Then ensure the full node has enough recent blocks to cover while erigon is processing the batch.~~
+
+#### Update [2022-08-30]
+After doing a full fresh sync using 16k blocks in mdbx this issue is resolved. The comment above is left here so if in the future it happens again there is documentation that it has existed before.
 
 # Technologies I use
 I did a lot of testing of different file systems, different AWS node classes, different tuning parameters and came to the the following conclusions:
@@ -71,10 +74,13 @@ The big features that make ZFS amazing for this kind of use case is that:
 * You can add new drives to the pool very fast. In the event you start running out of space, you can easily add another drive to the instance and then run `zpool add` to add additional space to the pool effortlessly (however you can't remove any).
 * ZFS's SLOG \[L2ARC\]. This might be the biggest reason to use it. Lets imagine a world where it is unrealistic to fit everything into SSD/NVMes in a cost effective way, but old spinning plates are still cheap. Well, this is where the SLOG comes in. This enables you to use the HDD as the drive that has all the data and then add SSD/NVMes as a cache drive. ZFS will automatically populate the SSD/NVMes with the most commonly read blocks, which enables extremely fast reads from the SSD/NVMes on frequently accessed data.
 
+#### Notice
+ZFS does add overhead that likely adds overhead to erigon which decreases performance, but in testing it has not been shown to be much of an issue. The configuration I use is slightly modified from the config below, the script that keeps snapshots updated uses `recordsize=1M`, which means that if 1 byte is modified at least 1Mb of data is written to disk and `compression=lz4`. `recordsize` influences how compressible the data is, because a compression frame is set by `recordsize`, so the larger the recordsize, generally the more compressed the data will be. In testing `lz4` has not shown to be noticeably slower than when compression is disabled. This is likely because the amount read and written to disk is reduced, so it can read and write \~2x more data for the same time and since `lz4` is so fast at decompression the overhead is offset by less data it needs to read from disk.
+
 ### ZFS configuration
 After a bit of AB testing I found the following ZFS configuration to work the best:
 ```sh
-zfs set recordsize=32K tank
+zfs set recordsize=16k tank
 zfs set sync=disabled tank
 zfs set redundant_metadata=most tank
 zfs set atime=off tank
