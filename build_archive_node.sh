@@ -72,10 +72,12 @@ sed -i 's/user: 472:0/user: ${DOCKER_UID:-1000}:${DOCKER_GID:-1000}/g' docker-co
 # Setup zfs dataset and download the latest erigon snapshot into it.
 zfs create -o mountpoint=/erigon/data/erigon tank/erigon_data
 mkdir -p /erigon/data/erigon/chaindata/
+mkdir -p /erigon/data/erigon/parlia/
 cd /erigon/data/erigon
 aws s3 sync --request-payer=requester --quiet s3://public-blockchain-snapshots/bsc/erigon-snapshots-folder-latest/ /erigon/data/erigon/snapshots/ &
 sync_pid="$!"
 aws s3 cp --request-payer=requester "s3://public-blockchain-snapshots/bsc/erigon-16k-db-latest.mdbx.zstd" - | pv | /zstd/zstd --long=31 -d > /erigon/data/erigon/chaindata/mdbx.dat
+aws s3 cp --request-payer=requester "s3://public-blockchain-snapshots/bsc/parlia-db-latest.mdbx.zstd" - | pv | /zstd/zstd --long=31 -d > /erigon/data/erigon/parlia/mdbx.dat
 
 wait "$sync_pid" # Wait for sync process to finish.
 
