@@ -196,10 +196,7 @@ function download_snapshots() {
     zfs create -o mountpoint=/erigon/data/bsc/snapshots tank/erigon_data/bsc/snapshots
   fi
   mkdir -p /erigon/data/bsc/snapshots/
-  # Download more aggressively by increasing the number of concurrent requests.
-  aws configure set s3.max_concurrent_requests 100 --profile erigon-more-concurrent-requests
   aws s3 sync \
-      --profile erigon-more-concurrent-requests \
       --request-payer requester \
       s3://public-blockchain-snapshots/bsc/erigon-snapshots-folder-latest/ \
       /erigon/data/bsc/snapshots/
