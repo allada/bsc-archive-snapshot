@@ -231,7 +231,7 @@ function download_parlia() {
       --request-payer requester \
       s3://public-blockchain-snapshots/bsc/parlia-db-latest.mdbx.zstd \
       - \
-    | pzstd -d -o /erigon/data/bsc/parlia/mdbx.dat || true
+    | pzstd -d -f -o /erigon/data/bsc/parlia/mdbx.dat || true
 }
 
 # This complicated bit of code accomplishes 2 goals.
