@@ -36,6 +36,47 @@ function safe_wait() {
   done
 }
 
+# This is pretty much the same as: `aws s3 sync s3://foo/bar /foo/bar`, but with better
+# parallelization.
+function parallel_sync_download() {
+  set -euo pipefail
+  full_s3_path=$1
+  shift
+  local_path=$1
+  shift
+
+  s3_bucket=$(echo "$full_s3_path" | cut -d'/' -f3)
+  s3_path="${full_s3_path#s3://$s3_bucket/}"
+
+  num_cores=$(nproc)
+  # This is an inverse log10(). The lower the number of cores you have the more processes you'll
+  # spawn. The logic here is that on less powerful machines you'll almost certainly want more
+  # than 1 download going on at a time. The same in reverse, on 128 core machines, you will be
+  # limited by network instead of cpu ability. 128 cores = 89 jobs, 64 cores = 56 jobs,
+  # 32 cores = 36 jobs, 16 cores = 25 jobs, 4 cores = 15 jobs, exc...
+  parallel_count=$(echo "x = $num_cores / (l(($num_cores + 8) / 8) / l(10)); scale=0; x / 1" | bc -l)
+
+  set +x # Reduces the noise of commands being generated.
+
+  # Download all the individual files from aws, decompress them, then place them into the snapshots
+  # folder. This is similar to running:
+  #   aws s3 sync --request-payer=requester s3://public-blockchain-snapshots/bsc/erigon/archive/latest/v1/snapshots/ /erigon/data/bsc/snapshots/
+  # The major difference is that it will, while downloading, decompress each file.
+  commands=()
+  for aws_path in $(aws s3 ls --request-payer=requester --recursive "$full_s3_path" | tr -s ' ' ' ' | cut -d' ' -f4); do
+    relative_path=$(dirname "${aws_path#$s3_path}")
+    file=$(basename $aws_path)
+
+    read_remote_file="aws s3 cp --request-payer=requester s3://$s3_bucket/$aws_path -"
+    mkdir -p "$local_path/$relative_path"
+    decompress="pzstd -d -q --stdout"
+    save_to_file="cat > $local_path/$relative_path/${file%.zstd}"
+    commands+=("sh -c '$read_remote_file | $decompress | $save_to_file'")
+  done
+  ( IFS=$'\n'; echo "${commands[*]}" ) | \
+    pjoin --parallel-count $parallel_count
+}
+
 function install_prereq() {
   set -euxo pipefail
   # Basic installs.
@@ -174,7 +215,7 @@ function install_erigon() {
   cd /erigon
   git clone https://github.com/ledgerwatch/erigon.git
   cd /erigon/erigon
-  git checkout v2.29.0
+  git checkout v2.30.0
   CC=clang-12 CXX=clang++-12 CFLAGS="-O3" make erigon
   ln -s /erigon/erigon/build/bin/erigon /usr/bin/erigon
 
@@ -196,10 +237,12 @@ function download_snapshots() {
     zfs create -o mountpoint=/erigon/data/bsc/snapshots tank/erigon_data/bsc/snapshots
   fi
   mkdir -p /erigon/data/bsc/snapshots/
-  aws s3 sync \
-      --request-payer requester \
-      s3://public-blockchain-snapshots/bsc/erigon-snapshots-folder-latest/ \
-      /erigon/data/bsc/snapshots/
+
+  parallel_sync_download s3://public-blockchain-snapshots/bsc/erigon/archive/latest/v1/snapshots/ /erigon/data/bsc/snapshots/
+
+  # We then need to touch each .idx file. This is because erigon needs each .idx file to have an
+  # mtime greater than the .seq file.
+  find /erigon/data/bsc/snapshots/ -type f -name "*.idx" -exec touch {} \;
 }
 
 # This is not strictly required, but it will make it much faster for a node to join the pool.
@@ -208,14 +251,9 @@ function download_nodes() {
   if ! zfs list tank/erigon_data/bsc/nodes ; then
     zfs create -o mountpoint=/erigon/data/bsc/nodes tank/erigon_data/bsc/nodes
   fi
-  # TODO(allada) Figure out a way to compress and decompress this. It has directories inside it
-  # that refer to which protocol version it is using, so it's not easy to know if an upgrade
-  # happens. The file is only about 1GB, so not a huge deal.
-  aws s3 sync \
-      --request-payer requester \
-      s3://public-blockchain-snapshots/bsc/erigon-nodes-folder-latest/ \
-      /erigon/data/bsc/nodes/ \
-  || true # This command is allowed to fail since it's only an optimization.
+
+  # This command is allowed to fail.
+  parallel_sync_download s3://public-blockchain-snapshots/bsc/erigon/archive/latest/v1/nodes/ /erigon/data/bsc/nodes/nodes/ || true
 }
 
 # This is not strictly required, but it will make it much faster to start the Execution phase
@@ -227,11 +265,7 @@ function download_parlia() {
   if ! zfs list tank/erigon_data/bsc/parlia ; then
     zfs create -o mountpoint=/erigon/data/bsc/parlia tank/erigon_data/bsc/parlia
   fi
-  aws s3 cp \
-      --request-payer requester \
-      s3://public-blockchain-snapshots/bsc/parlia-db-latest.mdbx.zstd \
-      - \
-    | pzstd -d -f -o /erigon/data/bsc/parlia/mdbx.dat || true
+  parallel_sync_download s3://public-blockchain-snapshots/bsc/erigon/archive/latest/v1/parlia/ /erigon/data/bsc/parlia/ || true
 }
 
 # This complicated bit of code accomplishes 2 goals.
@@ -248,7 +282,7 @@ function download_database_file() {
   fi
   zfs create -o mountpoint=/erigon/data/bsc/chaindata tank/erigon_data/bsc/chaindata
 
-  s3pcp --requester-pays s3://public-blockchain-snapshots/bsc/erigon-16k-db-latest.mdbx.zstd \
+  s3pcp --requester-pays s3://public-blockchain-snapshots/bsc/erigon/archive/latest/v1/chaindata/mdbx.dat.zstd \
     | pv \
     | pzstd -p $(nproc) -q -d -f -o /erigon/data/bsc/chaindata/mdbx.dat
 }
@@ -324,7 +358,7 @@ trap 'shutdown now' EXIT
 function upload_mdbx_file() {
   upload_id=$(aws s3api create-multipart-upload \
       --bucket public-blockchain-snapshots \
-      --key bsc/erigon-16k-db-latest.mdbx.zstd \
+      --key bsc/erigon/archive/latest/v1/chaindata/mdbx.dat.zstd \
       --request-payer requester \
     | jq -r ".UploadId")
 
@@ -365,7 +399,7 @@ function upload_mdbx_file() {
             --body /erigon_upload_tmp/working_stdout/\$(printf %05d \$SEQ) \
             --request-payer requester \
             --bucket public-blockchain-snapshots \
-            --key bsc/erigon-16k-db-latest.mdbx.zstd \
+            --key bsc/erigon/archive/latest/v1/chaindata/mdbx.dat.zstd \
             --upload-id $upload_id \
             --part-number \$SEQ \
         | jq -r .ETag | tr -d \\\" | tee > /erigon_upload_tmp/upload_part_results/\$(printf %05d \$SEQ)') && \
@@ -379,7 +413,7 @@ part_nums=os.listdir('/erigon_upload_tmp/upload_part_results/')
 part_nums.sort()
 boto3.client('s3').complete_multipart_upload(
     Bucket='public-blockchain-snapshots',
-    Key='bsc/erigon-16k-db-latest.mdbx.zstd',
+    Key='bsc/erigon/archive/latest/v1/chaindata/mdbx.dat.zstd',
     UploadId='$upload_id',
     RequestPayer='requester',
     MultipartUpload={
@@ -388,15 +422,61 @@ boto3.client('s3').complete_multipart_upload(
 )"
 }
 
+# Note: This will also delete remote files that are not local.
+# This is pretty much the same as `aws s3 sync /local/folder/ s3://foo/bar/`, but better
+# parallization.
+function parallel_sync_upload() {
+  set +x
+  local_path=$1
+  shift
+  full_s3_path=$1
+  shift
+
+  s3_bucket=$(echo "$full_s3_path" | cut -d'/' -f3)
+  s3_path="${full_s3_path#s3://$s3_bucket/}"
+  s3_path="${s3_path%/}"
+
+  local_files=$(find $local_path -type f | cut -c$((${#local_path}+1))- | sed -e 's/$/.zstd/' | sort)
+  remote_files=$(aws s3 ls --recursive "$full_s3_path" | tr -s ' ' ' ' | cut -d' ' -f4 | cut -c$((${#s3_path}+2))- | sort)
+  files_to_remove=$(comm -13 <(echo "$local_files") <(echo "$remote_files"))
+  files_to_upload=$(comm -23 <(echo "$local_files") <(echo "$remote_files"))
+  set -x
+  for s3_delete_file in $files_to_remove ; do
+    aws s3 rm "s3://$s3_bucket/$s3_path/$s3_delete_file"
+  done
+
+  num_cores=$(nproc)
+  # This is an inverse log10(). The lower the number of cores you have the more processes you'll
+  # spawn. The logic here is that on less powerful machines you'll almost certainly want more
+  # than 1 download going on at a time. The same in reverse, on 128 core machines, you will be
+  # limited by network instead of cpu ability. 128 cores = 89 jobs, 64 cores = 56 jobs,
+  # 32 cores = 36 jobs, 16 cores = 25 jobs, 4 cores = 15 jobs, exc...
+  parallel_count=$(echo "x = $num_cores / (l(($num_cores + 8) / 8) / l(10)); scale=0; x / 1" | bc -l)
+
+  # Download all the individual files from aws, decompress them, then place them into the snapshots
+  # folder. This is similar to running:
+  #   aws s3 sync --request-payer=requester $full_s3_path $local_path
+  # The major difference is that it will, while downloading, decompress each file.
+  commands=()
+  for relative_path_with_zstd in $files_to_upload ; do
+    relative_path="${relative_path_with_zstd%.zstd}"
+    compress_file="pzstd -6 -q --stdout $local_path/$relative_path"
+    upload_file="aws s3 cp - ${full_s3_path%}${relative_path}.zstd"
+    commands+=("sh -c '$compress_file | $upload_file'")
+  done
+  if [ "${#commands[@]}" -gt 0 ] ; then
+    ( IFS=$'\n'; echo "${commands[*]}" ) | pjoin --parallel-count $parallel_count
+  fi
+}
+
 zfs set readonly=on tank/erigon_data/bsc/snapshots
-aws s3 sync /erigon/data/bsc/snapshots s3://public-blockchain-snapshots/bsc/erigon-snapshots-folder-latest/ &
+parallel_sync_upload /erigon/data/bsc/snapshots/ s3://public-blockchain-snapshots/bsc/erigon/archive/latest/v1/snapshots/ &
 
 zfs set readonly=on tank/erigon_data/bsc/nodes
-aws s3 sync /erigon/data/bsc/nodes s3://public-blockchain-snapshots/bsc/erigon-nodes-folder-latest/ &
+parallel_sync_upload /erigon/data/bsc/nodes/ s3://public-blockchain-snapshots/bsc/erigon/archive/latest/v1/nodes/ &
 
 zfs set readonly=on tank/erigon_data/bsc/parlia
-pzstd -1 /erigon/data/bsc/parlia/mdbx.dat --stdout \
-  | aws s3 cp - s3://public-blockchain-snapshots/bsc/parlia-db-latest.mdbx.zstd &
+parallel_sync_upload /erigon/data/bsc/parlia/ s3://public-blockchain-snapshots/bsc/erigon/archive/latest/v1/parlia/ &
 
 zfs set readonly=on tank/erigon_data/bsc/chaindata
 upload_mdbx_file &
