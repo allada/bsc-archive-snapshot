@@ -503,7 +503,6 @@ EOT
 }
 
 install_prereq
-setup_drives
 
 # These installations can happen in parallel.
 install_zstd &
@@ -524,6 +523,7 @@ if [[ "${CREATE_SNAPSHOT_MODE:-}" == "1" ]]; then
   exit
 fi
 
+setup_drives
 prepare_zfs_datasets
 
 download_snapshots & # Download just the snapshots folder.
