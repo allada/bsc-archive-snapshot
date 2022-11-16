@@ -518,8 +518,10 @@ safe_wait # Wait for our parallel jobs finish.
 # this instance as a template for faster startup.
 if [[ "${CREATE_SNAPSHOT_MODE:-}" == "1" ]]; then
   apt update
+  # This fixes an error when upgrading default ubuntu 22.04 instance.
+  DEBIAN_FRONTEND=noninteractive apt install -y grub-efi-arm64
   DEBIAN_FRONTEND=noninteractive apt upgrade -y
-  shutdown +1
+  shutdown -r +1
   exit
 fi
 
