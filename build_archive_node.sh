@@ -29,6 +29,18 @@ fi
 # You may also set this through an environmental variable at startup.
 # SHOULD_AUTO_UPLOAD_SNAPSHOT="0"
 
+# Below is just a comment. It is done this way to make copy and paste much easier.
+# These are the commands used to create an image of a snapshot node.
+# When it's done the instance will reboot.
+# Make sure you launch the instance with the EC2 tag attached to the instance of:
+# `no-launch` set to something and the `Allow tags in metadata` flag checked.
+cat <<EOF > /dev/null
+sudo sh -c 'curl https://raw.githubusercontent.com/allada/bsc-archive-snapshot/master/build_archive_node.sh > /home/ubuntu/build_archive_node.sh'
+sudo sh -c "echo \"@reboot root sh -c 'curl --fail http://169.254.169.254/latest/meta-data/tags/instance/no-launch || SHOULD_AUTO_UPLOAD_SNAPSHOT=1 /home/ubuntu/build_archive_node.sh || shutdown +5 now'\" >> /etc/crontab"
+sudo chmod +x /home/ubuntu/build_archive_node.sh
+sudo CREATE_SNAPSHOT_MODE=1 /home/ubuntu/build_archive_node.sh
+EOF
+
 function safe_wait() {
   BACKGROUND_PIDS=( $(jobs -p) )
   for PID in "${BACKGROUND_PIDS[@]}"; do
@@ -501,6 +513,16 @@ install_s3pcp &
 install_putils &
 install_erigon &
 safe_wait # Wait for our parallel jobs finish.
+
+# This should only be set if we are only configuring the instance for an EBS snapshot.
+# Only set this global if you want to create your own snapshots and create an image of
+# this instance as a template for faster startup.
+if [[ "${CREATE_SNAPSHOT_MODE:-}" == "1" ]]; then
+  apt update
+  DEBIAN_FRONTEND=noninteractive apt upgrade -y
+  shutdown +1
+  exit
+fi
 
 prepare_zfs_datasets
 
