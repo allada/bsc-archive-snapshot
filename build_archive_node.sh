@@ -24,6 +24,28 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
+
+# Curious on why this script is so complicated when it is just downloading stuff and
+# configuring erigon?
+#
+# The short answer is because it costs a lot of money to maintain archive snapshots and
+# I needed to use a lot of tricks to save money. Some of the tricks I used are:
+# * When downloading the snapshots, use as much system resources as possible to get the
+#   data on disk as fast as possible. This is why there is so much parallelism happening.
+# * Similar to above, when uploading is happening, use mega-parallelism.
+# * Compress the data as much as possible, as the data is quite large.
+# * When uploading the snapshots directory (~25% of the archive size), only upload the
+#   parts that changed. This saves ~25% of upload time.
+# * There is/was not a lot of references on how to run an archive node. This script gives
+#   a reference guide on how to do it, which is why there's so much setup.
+# * At one point I frequently had users complain that the download would abruptly stop
+#   when downloading outside of us-west-2. This is because I simply replace existing
+#   files in s3 and have the s3 bucket configured to delete old versions of the file
+#   after a few days. This caused users download to be interrupted if a new version
+#   was uploaded while they are downloading. To solve this, I wrote a custom downloader
+#   that first queries the most recent version, then downloads that version specifically.
+
+
 # If set to "1", will create a crontab entry to upload a snapshot daily.
 # This requires write permission to `s3://public-blockchain-snapshots`.
 # You may also set this through an environmental variable at startup.
@@ -64,9 +86,9 @@ function parallel_sync_download() {
   # This is an inverse log10(). The lower the number of cores you have the more processes you'll
   # spawn. The logic here is that on less powerful machines you'll almost certainly want more
   # than 1 download going on at a time. The same in reverse, on 128 core machines, you will be
-  # limited by network instead of cpu ability. 128 cores = 89 jobs, 64 cores = 56 jobs,
-  # 32 cores = 36 jobs, 16 cores = 25 jobs, 4 cores = 15 jobs, exc...
-  parallel_count=$(echo "x = $num_cores / (l(($num_cores + 8) / 8) / l(10)); scale=0; x / 1" | bc -l)
+  # limited by network instead of cpu ability. 128 cores = 73 jobs, 64 cores = 42 jobs,
+  # 32 cores = 25 jobs, 16 cores = 16 jobs, 4 cores = 8 jobs, exc...
+  parallel_count=$(echo "x = $num_cores / (l($num_cores) / l(16)); scale=0; x / 1" | bc -l)
 
   set +x # Reduces the noise of commands being generated.
 
@@ -227,7 +249,7 @@ function install_erigon() {
   cd /erigon
   git clone https://github.com/ledgerwatch/erigon.git
   cd /erigon/erigon
-  git checkout v2.31.0
+  git checkout v2.32.0
   CC=clang-12 CXX=clang++-12 CFLAGS="-O3" make erigon
   ln -s /erigon/erigon/build/bin/erigon /usr/bin/erigon
 
@@ -289,10 +311,12 @@ function download_parlia() {
 #    about 3-4x faster than using normal `aws s3 cp` + `zstd -d`.
 function download_database_file() {
   set -euxo pipefail
-  if zfs list tank/erigon_data/bsc/chaindata ; then
-    return # Already have chaindata.
+  if ! zfs list tank/erigon_data/bsc/chaindata ; then
+    zfs create -o mountpoint=/erigon/data/bsc/chaindata tank/erigon_data/bsc/chaindata
   fi
-  zfs create -o mountpoint=/erigon/data/bsc/chaindata tank/erigon_data/bsc/chaindata
+
+  # Remove the file if it exists.
+  rm -rf /erigon/data/bsc/chaindata/mdbx.dat || true
 
   s3pcp --requester-pays s3://public-blockchain-snapshots/bsc/erigon/archive/latest/v1/chaindata/mdbx.dat.zstd \
     | pv \
@@ -461,9 +485,9 @@ function parallel_sync_upload() {
   # This is an inverse log10(). The lower the number of cores you have the more processes you'll
   # spawn. The logic here is that on less powerful machines you'll almost certainly want more
   # than 1 download going on at a time. The same in reverse, on 128 core machines, you will be
-  # limited by network instead of cpu ability. 128 cores = 89 jobs, 64 cores = 56 jobs,
-  # 32 cores = 36 jobs, 16 cores = 25 jobs, 4 cores = 15 jobs, exc...
-  parallel_count=$(echo "x = $num_cores / (l(($num_cores + 8) / 8) / l(10)); scale=0; x / 1" | bc -l)
+  # limited by network instead of cpu ability. 128 cores = 85 jobs, 64 cores = 50 jobs,
+  # 32 cores = 31 jobs, 16 cores = 20 jobs, 4 cores = 10 jobs, exc...
+  parallel_count=$(echo "x = $num_cores / (l(($num_cores + 2) / 2) / l(16)); scale=0; x / 1" | bc -l)
 
   # Download all the individual files from aws, decompress them, then place them into the snapshots
   # folder. This is similar to running:
@@ -503,11 +527,19 @@ EOT
 }
 
 install_prereq
+install_aws_cli
+
+# Check to see if the user has AWS credentials configured.
+if ! aws s3 ls --request-payer=requester s3://public-blockchain-snapshots ; then
+  echo "It appears you do not have AWS credentials configured on this computer or user."
+  echo "Normally this can be fixed by running 'aws configure' (maybe with sudo)."
+  echo "Please see the following link for more details:"
+  echo "https://docs.aws.amazon.com/cli/latest/userguide/getting-started-quickstart.html"
+  exit 1
+fi
 
 # These installations can happen in parallel.
 install_zstd &
-
-install_aws_cli &
 install_s3pcp &
 install_putils &
 install_erigon &
