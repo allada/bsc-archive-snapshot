@@ -1,5 +1,5 @@
 ## UPDATE
-There has been enough demand for an ethereum snapshot to be hosted that I have decided to start maintaining one here: https://github.com/allada/eth-archive-snapshot
+This project has been archived in support of this project: https://github.com/bnb-chain/bsc-snapshots#erigon-bsc-snapshotarchive-node
 
 # BSC Archive Node Snapshot Tools
 This repository holds the tools and commands that can be used to deploy your own BSC Archive node by downloading pre-built snapshots and installing them on an instance.
